@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/hex"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -17,15 +18,17 @@ import (
 )
 
 const (
-	wow335a = "wow335a"
-	patches = "Data/patch-4.mpq"
+	wow335a    = "wow335a"
+	liveBucket = "live"
+	testBucket = "test"
+	data       = "Data/patch-4.mpq"
 )
 
-func download(client *minio.Client) bool {
+func download(client *minio.Client, bucket string) bool {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	objects := client.ListObjects(ctx, wow335a, minio.ListObjectsOptions{
+	objects := client.ListObjects(ctx, bucket, minio.ListObjectsOptions{
 		Recursive: true,
 	})
 
@@ -48,7 +51,7 @@ func download(client *minio.Client) bool {
 				return false
 			}
 
-			object, err := client.GetObject(ctx, wow335a, info.Key, minio.GetObjectOptions{})
+			object, err := client.GetObject(ctx, bucket, info.Key, minio.GetObjectOptions{})
 			if err != nil {
 				log.Println(err)
 				return false
@@ -75,17 +78,17 @@ func download(client *minio.Client) bool {
 	return true
 }
 
-func patch(client *minio.Client) bool {
+func patch(client *minio.Client, bucket string) bool {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	info, err := client.StatObject(context.Background(), wow335a, patches, minio.StatObjectOptions{})
+	info, err := client.StatObject(context.Background(), bucket, data, minio.StatObjectOptions{})
 	if err != nil {
 		fmt.Println(err)
 		return false
 	}
 
-	object, err := client.GetObject(ctx, wow335a, patches, minio.GetObjectOptions{})
+	object, err := client.GetObject(ctx, bucket, data, minio.GetObjectOptions{})
 	if err != nil {
 		log.Println(err)
 		return false
@@ -141,13 +144,21 @@ func main() {
 		log.Println(err)
 	}
 
-	downloaded := download(client)
+	downloaded := download(client, wow335a)
 	if !downloaded {
 		prompt()
 		return
 	}
 
-	patched := patch(client)
+	test := flag.Bool("test", false, "Use test patch")
+	flag.Parse()
+	bucket := liveBucket
+	if *test {
+		bucket = testBucket
+	}
+	log.Printf("Bucket %s", bucket)
+
+	patched := patch(client, bucket)
 	if !patched {
 		prompt()
 		return
