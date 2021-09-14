@@ -1,3 +1,4 @@
+//go:generate go-winres simply --icon favico.png
 package main
 
 import (
