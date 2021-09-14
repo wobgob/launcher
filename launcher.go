@@ -4,12 +4,13 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/hex"
-	"flag"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 
 	"github.com/minio/minio-go/v7"
@@ -18,34 +19,94 @@ import (
 )
 
 const (
-	wow335a    = "wow335a"
-	liveBucket = "live"
-	testBucket = "test"
-	data       = "Data/patch-4.mpq"
+	bucket = "wow335a"
+	data   = "Data/patch-4.mpq"
+	status = "status.json"
 )
 
-func download(client *minio.Client, bucket string) bool {
+func write(file **os.File, objects *map[string]bool, result *bool) {
+	enc := json.NewEncoder(*file)
+	enc.SetIndent("", "\t")
+	err := enc.Encode(*objects)
+	if err != nil {
+		log.Println(err)
+		*result = false
+	}
+}
+
+func download(client *minio.Client) (result bool) {
+	var file *os.File
+	objects := make(map[string]bool)
+	_, err := os.Stat(status)
+	if err == nil {
+		file, err = os.Open(status)
+		if err != nil {
+			log.Println(err)
+			return false
+		}
+
+		dec := json.NewDecoder(file)
+		err = dec.Decode(&objects)
+		if err != nil {
+			log.Println(err)
+			return false
+		}
+
+		file.Truncate(0)
+		file.Seek(0, 0)
+	} else if os.IsNotExist(err) {
+		file, err = os.Create(status)
+		if err != nil {
+			log.Println(err)
+			return false
+		}
+	} else if err != nil {
+		log.Println(err)
+		return false
+	}
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt)
+	go func() {
+		for range sig {
+			write(&file, &objects, &result)
+			os.Exit(1)
+		}
+	}()
+
+	defer write(&file, &objects, &result)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	objects := client.ListObjects(ctx, bucket, minio.ListObjectsOptions{
+	list := client.ListObjects(ctx, bucket, minio.ListObjectsOptions{
 		Recursive: true,
 	})
 
-	for info := range objects {
+	for info := range list {
 		if info.Err != nil {
 			log.Println(info.Err)
 			return false
 		}
 
 		_, err := os.Stat(info.Key)
-		if os.IsNotExist(err) {
-
+		complete, ok := objects[info.Key]
+		switch {
+		case err == nil && (!ok || (ok && complete)):
+			break
+		case err == nil && ok && !complete:
+			err = os.Remove(info.Key)
+			if err != nil {
+				log.Println(err)
+				return false
+			}
+			fallthrough
+		case os.IsNotExist(err):
 			dir := filepath.Dir(info.Key)
 			_, err := os.Stat(dir)
 			if os.IsNotExist(err) {
 				err = os.MkdirAll(dir, 0755)
-				log.Printf("Created directory %s\n", dir)
+				log.Printf("Created %s\n", dir)
 			} else if err != nil {
 				log.Println(err)
 				return false
@@ -57,7 +118,7 @@ func download(client *minio.Client, bucket string) bool {
 				return false
 			}
 
-			file, err := os.Create(info.Key)
+			f, err := os.Create(info.Key)
 			if err != nil {
 				log.Println(err)
 				return false
@@ -65,11 +126,13 @@ func download(client *minio.Client, bucket string) bool {
 
 			log.Printf("Downloading %s\n", info.Key)
 			bar := progressbar.DefaultBytes(info.Size)
-			if _, err = io.Copy(io.MultiWriter(file, bar), object); err != nil {
+			objects[info.Key] = false
+			if _, err = io.Copy(io.MultiWriter(f, bar), object); err != nil {
 				log.Println(err)
 				return false
 			}
-		} else if err != nil {
+			objects[info.Key] = true
+		default:
 			log.Println(err)
 			return false
 		}
@@ -78,19 +141,13 @@ func download(client *minio.Client, bucket string) bool {
 	return true
 }
 
-func patch(client *minio.Client, bucket string) bool {
+func patch(client *minio.Client) bool {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	info, err := client.StatObject(context.Background(), bucket, data, minio.StatObjectOptions{})
+	info, err := client.StatObject(ctx, bucket, data, minio.StatObjectOptions{})
 	if err != nil {
 		fmt.Println(err)
-		return false
-	}
-
-	object, err := client.GetObject(ctx, bucket, data, minio.GetObjectOptions{})
-	if err != nil {
-		log.Println(err)
 		return false
 	}
 
@@ -103,6 +160,7 @@ func patch(client *minio.Client, bucket string) bool {
 	stat, err := os.Stat(info.Key)
 	if err != nil {
 		log.Println(err)
+		return false
 	}
 
 	log.Printf("Checking %s\n", info.Key)
@@ -112,6 +170,11 @@ func patch(client *minio.Client, bucket string) bool {
 
 	if hex.EncodeToString(hash.Sum(nil)) != info.ETag {
 		log.Printf("Downloading %s\n", info.Key)
+		object, err := client.GetObject(ctx, bucket, data, minio.GetObjectOptions{})
+		if err != nil {
+			log.Println(err)
+			return false
+		}
 		bar := progressbar.DefaultBytes(stat.Size())
 		if _, err = io.Copy(io.MultiWriter(file, bar), object); err != nil {
 			log.Println(err)
@@ -129,10 +192,6 @@ func prompt() {
 
 func main() {
 	endpoint := "cdn.wobgob.com"
-	// Unprivileged user with read-only access to `wow335a`. Better than
-	// anonymous access.
-	accessKeyID := "AEfyf0EpQdQ602Ri"
-	secretAccessKey := "Lhn5MR8IGWkiS1lvWNebb0DmrwIx4uF3kXQl4odfkOwkgr7ci0"
 	useSSL := true
 
 	client, err := minio.New(endpoint, &minio.Options{
@@ -144,21 +203,13 @@ func main() {
 		log.Println(err)
 	}
 
-	downloaded := download(client, wow335a)
+	downloaded := download(client)
 	if !downloaded {
 		prompt()
 		return
 	}
 
-	test := flag.Bool("test", false, "Use test patch")
-	flag.Parse()
-	bucket := liveBucket
-	if *test {
-		bucket = testBucket
-	}
-	log.Printf("Bucket %s", bucket)
-
-	patched := patch(client, bucket)
+	patched := patch(client)
 	if !patched {
 		prompt()
 		return
