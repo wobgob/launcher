@@ -1,1 +1,1 @@
-launcher.exe -test
+@launcher.exe -test
