@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -33,6 +34,30 @@ func write(file **os.File, objects *map[string]bool, result *bool) {
 		log.Println(err)
 		*result = false
 	}
+}
+
+func handleConsoleCtrl(c chan<- os.Signal) error {
+	kernel32 := syscall.NewLazyDLL("kernel32.dll")
+	setConsoleCtrlHandler := kernel32.NewProc("SetConsoleCtrlHandler")
+
+	n, _, err := setConsoleCtrlHandler.Call(
+		syscall.NewCallback(func(controlType uint) uint {
+			if controlType >= 2 {
+				c <- syscall.Signal(0x1f + controlType)
+
+				select {} // blocks forever
+			}
+
+			return 0
+		}),
+		1,
+	)
+
+	if n == 0 {
+		return err
+	}
+
+	return nil
 }
 
 func download(client *minio.Client) (result bool) {
@@ -66,6 +91,10 @@ func download(client *minio.Client) (result bool) {
 	}
 
 	sig := make(chan os.Signal, 1)
+	if err := handleConsoleCtrl(sig); err != nil {
+		log.Println(err)
+		return false
+	}
 	signal.Notify(sig, os.Interrupt)
 	go func() {
 		for range sig {
