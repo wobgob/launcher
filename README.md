@@ -59,5 +59,11 @@ Import-Certificate -FilePath .\code_signing.crt -Cert Cert:\CurrentUser\Root
 6. Sign the executable.
 
 ```powershell
-Set-AuthenticodeSignature .\launcher.exe -Certificate (Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert)
+Set-AuthenticodeSignature .\launcher.exe -Certificate (Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert)[0]
+```
+
+7. If you later want to remove the certificate and start again.
+
+```powershell
+(Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert)[0] | Remove-Item
 ```
