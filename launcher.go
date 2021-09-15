@@ -53,15 +53,14 @@ func download(client *minio.Client) (result bool) {
 			return false
 		}
 
-		file.Truncate(0)
-		file.Seek(0, 0)
-	} else if os.IsNotExist(err) {
-		file, err = os.Create(status)
-		if err != nil {
-			log.Println(err)
-			return false
-		}
-	} else if err != nil {
+		os.Remove(status)
+	} else if err != nil && os.IsExist(err) {
+		log.Println(err)
+		return false
+	}
+
+	file, err = os.Create(status)
+	if err != nil {
 		log.Println(err)
 		return false
 	}
