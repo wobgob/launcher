@@ -23,7 +23,7 @@ import (
 const (
 	bucket = "wow335a"
 	data   = "Data/patch-4.mpq"
-	status = "status.json"
+	status = "launcher.json"
 )
 
 func write(file **os.File, objects *map[string]bool, result *bool) {
