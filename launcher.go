@@ -176,7 +176,7 @@ func patch(client *minio.Client) bool {
 
 	info, err := client.StatObject(ctx, bucket, data, minio.StatObjectOptions{})
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 		return false
 	}
 
