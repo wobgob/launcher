@@ -21,9 +21,10 @@ import (
 )
 
 const (
-	bucket = "wow335a"
-	data   = "Data/patch-Z.MPQ"
-	status = "launcher.json"
+	bucket    = "wow335a"
+	patchZ    = "Data/patch-Z.MPQ"
+	realmlist = "Data/enUS/realmlist.wtf"
+	status    = "launcher.json"
 )
 
 func write(file **os.File, objects *map[string]bool, result *bool) {
@@ -170,11 +171,11 @@ func download(client *minio.Client) (result bool) {
 	return true
 }
 
-func patch(client *minio.Client) bool {
+func patch(client *minio.Client, filename string) bool {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	info, err := client.StatObject(ctx, bucket, data, minio.StatObjectOptions{})
+	info, err := client.StatObject(ctx, bucket, filename, minio.StatObjectOptions{})
 	if err != nil {
 		log.Println(err)
 		return false
@@ -199,7 +200,7 @@ func patch(client *minio.Client) bool {
 
 	if hex.EncodeToString(hash.Sum(nil)) != info.ETag {
 		log.Printf("Downloading %s\n", info.Key)
-		object, err := client.GetObject(ctx, bucket, data, minio.GetObjectOptions{})
+		object, err := client.GetObject(ctx, bucket, patchZ, minio.GetObjectOptions{})
 		if err != nil {
 			log.Println(err)
 			return false
@@ -238,7 +239,13 @@ func main() {
 		return
 	}
 
-	patched := patch(client)
+	patched := patch(client, patchZ)
+	if !patched {
+		prompt()
+		return
+	}
+
+	patched = patch(client, realmlist)
 	if !patched {
 		prompt()
 		return
