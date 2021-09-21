@@ -1,4 +1,4 @@
-//go:generate go-winres simply --icon favico.png
+//go:generate go-winres simply --icon favico.png --admin
 package main
 
 import (
@@ -22,7 +22,7 @@ import (
 
 const (
 	bucket = "wow335a"
-	data   = "Data/patch-Z.mpq"
+	data   = "Data/patch-Z.MPQ"
 	status = "launcher.json"
 )
 
