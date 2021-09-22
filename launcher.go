@@ -2,30 +2,151 @@
 package main
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"syscall"
 
+	"github.com/google/go-github/v39/github"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/schollz/progressbar/v3"
+	"golang.org/x/mod/semver"
 )
 
 const (
+	version   = "v0.4.0"
+	owner     = "wobgob"
+	repo      = "launcher"
+	exe       = "wow335a/launcher.exe"
+	link      = "https://github.com/wobgob/launcher/releases/download/%s/wow335a.zip"
 	bucket    = "wow335a"
 	patchZ    = "Data/patch-Z.MPQ"
 	realmlist = "Data/enUS/realmlist.wtf"
 	status    = "launcher.json"
 )
+
+func readZip(file *zip.File) ([]byte, error) {
+	f, err := file.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	return ioutil.ReadAll(f)
+}
+
+func scream(err error, tagName string) {
+	log.Println(err)
+	log.Println("Manually install the update from " + fmt.Sprintf(link, tagName))
+	prompt()
+	os.Exit(1)
+}
+
+func update() (bool, error) {
+	client := github.NewClient(nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	release, _, err := client.Repositories.GetLatestRelease(ctx, owner, repo)
+	if err != nil {
+		return false, err
+	}
+
+	exeName := os.Args[0]
+	tagName := release.GetName()
+	newer := semver.Compare(tagName, version)
+	if newer != 1 {
+		return false, nil
+	}
+
+	log.Printf("Updating %s\n", exeName)
+
+	req, err := http.NewRequest("GET", fmt.Sprintf(link, tagName), nil)
+	if err != nil {
+		return false, err
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	buffer := new(bytes.Buffer)
+	bar := progressbar.DefaultBytes(resp.ContentLength)
+	io.Copy(io.MultiWriter(buffer, bar), resp.Body)
+
+	body, err := ioutil.ReadAll(buffer)
+	if err != nil {
+		return false, err
+	}
+
+	reader, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
+	if err != nil {
+		return false, err
+	}
+
+	var exeBytes []byte
+	found := false
+	for _, file := range reader.File {
+		if file.Name == exe {
+			found = true
+			exeBytes, err = readZip(file)
+			if err != nil {
+				log.Println(err)
+				return false, err
+			}
+		}
+	}
+
+	if !found {
+		return false, errors.New(fmt.Sprintf("Unable to get %s.", exe))
+	}
+
+	err = os.Rename(exeName, exeName+"~")
+	if err != nil {
+		log.Println(err)
+		return false, err
+	}
+
+	out, err := os.Create(exeName)
+	if err != nil {
+		scream(err, tagName)
+	}
+
+	_, err = io.Copy(out, bytes.NewReader(exeBytes))
+	if err != nil {
+		scream(err, tagName)
+	}
+
+	err = out.Close()
+	if err != nil {
+		scream(err, tagName)
+	}
+
+	cmd := exec.Command(exeName)
+	err = cmd.Start()
+	if err != nil {
+		scream(err, tagName)
+	}
+
+	return true, nil
+}
 
 func write(file **os.File, objects *map[string]bool, result *bool) {
 	enc := json.NewEncoder(*file)
@@ -240,6 +361,14 @@ func prompt() {
 }
 
 func main() {
+	exeName := os.Args[0]
+	err := os.RemoveAll(exeName + "~")
+	if err != nil {
+		log.Println(err)
+		prompt()
+		return
+	}
+
 	endpoint := "cdn.wobgob.com"
 	useSSL := true
 
@@ -250,6 +379,19 @@ func main() {
 
 	if err != nil {
 		log.Println(err)
+		prompt()
+		return
+	}
+
+	updated, err := update()
+	if err != nil {
+		log.Println(err)
+		prompt()
+		return
+	}
+
+	if updated {
+		return
 	}
 
 	downloaded := download(client)
