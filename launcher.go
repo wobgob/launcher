@@ -1,4 +1,4 @@
-//go:generate go-winres simply --icon favico.png --admin
+//go:generate go-winres simply --icon favico.png
 package main
 
 import (
@@ -181,13 +181,13 @@ func patch(client *minio.Client, filename string) bool {
 		return false
 	}
 
-	file, err := os.Open(info.Key)
+	stat, err := os.Stat(info.Key)
 	if err != nil {
 		log.Println(err)
 		return false
 	}
 
-	stat, err := os.Stat(info.Key)
+	file, err := os.Open(info.Key)
 	if err != nil {
 		log.Println(err)
 		return false
@@ -198,13 +198,32 @@ func patch(client *minio.Client, filename string) bool {
 	hash := md5.New()
 	io.Copy(io.MultiWriter(hash, bar), file)
 
+	err = file.Close()
+	if err != nil {
+		log.Println(err)
+		return false
+	}
+
 	if hex.EncodeToString(hash.Sum(nil)) != info.ETag {
-		log.Printf("Downloading %s\n", info.Key)
-		object, err := client.GetObject(ctx, bucket, patchZ, minio.GetObjectOptions{})
+		err = os.Remove(info.Key)
 		if err != nil {
 			log.Println(err)
 			return false
 		}
+
+		file, err = os.Create(info.Key)
+		if err != nil {
+			log.Println(err)
+			return false
+		}
+
+		log.Printf("Downloading %s\n", info.Key)
+		object, err := client.GetObject(ctx, bucket, filename, minio.GetObjectOptions{})
+		if err != nil {
+			log.Println(err)
+			return false
+		}
+
 		bar := progressbar.DefaultBytes(stat.Size())
 		if _, err = io.Copy(io.MultiWriter(file, bar), object); err != nil {
 			log.Println(err)
