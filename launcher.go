@@ -28,7 +28,7 @@ import (
 )
 
 const (
-	version   = "v0.3.0"
+	version   = "v0.4.0"
 	owner     = "wobgob"
 	repo      = "launcher"
 	exe       = "wow335a/launcher.exe"
